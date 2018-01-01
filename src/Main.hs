@@ -174,7 +174,6 @@ termUp = \case
 
 data RedundancyMode = Hyp | Goal
 
--- gamma: Context'
 redundant :: RedundancyMode -> Context' -> Type -> Bool
 redundant mode gamma t = case t of
   Or a b -> case mode of
@@ -186,7 +185,6 @@ redundant mode gamma t = case t of
   And a b -> redundant mode gamma a && redundant mode gamma b
   Impl _a b -> redundant mode gamma b
 
--- sigma: Set Var
 uses :: Set Var -> DerivationDown -> Bool
 uses =
   let usesInv sigma = \case
@@ -212,7 +210,6 @@ uses =
         EndUp d -> usesInv sigma d
   in usesDown
 
--- delta: ContextList
 quotient :: ContextList -> Context' -> Context'
 quotient delta gamma =
   let Context delta' = foldl (\m (v, a) -> addContext a v m) mempty delta
@@ -448,7 +445,7 @@ search = searchInv mempty mempty []
 
 terms :: M (Plur DerivationInv) -> Either Failure [Term]
 terms t = case runM t of
-  (Left f) -> Left f
+  Left f   -> Left f
   Right t' -> Right (fmap termInv (toList t'))
 
 printImpls :: Type -> IO ()
