@@ -39,7 +39,8 @@ instance Monoid (Context a) where
 -- contextMerge (Context a) (Context b) = Context (Map.merge a b)
 
 contextFind :: Formula -> Context' -> Plur Var
-contextFind formula (Context context) = Map.findWithDefault Zero formula context
+contextFind formula (Context context)
+  = Map.findWithDefault Zero formula context
 
 data Formula
   = Atom Atom
@@ -93,7 +94,8 @@ decomp pa = case pa of
     let prepend side (obli, hd) = (\d -> obli (LAnd d side), hd)
     in fmap (prepend I1) (decomp a1) <> fmap (prepend I2) (decomp a2)
   Impl a b ->
-    let prepend (obli, hd) = (\dab -> Request a (\da -> obli (LImpl dab da)), hd)
+    let prepend (obli, hd)
+          = (\dab -> Request a (\da -> obli (LImpl dab da)), hd)
     in fmap prepend (decomp b)
 
 data Term
@@ -141,15 +143,15 @@ instance Show Term where
 
 termInv :: DerivationInv -> Term
 termInv = \case
-  RAnd da db -> Pair (termInv da) (termInv db)
-  LOr v _ta da _tb db -> Case v (termInv da) (termInv db)
-  RImpl v f d -> Lam v f (termInv d)
+  RAnd da db            -> Pair (termInv da) (termInv db)
+  LOr v _ta da _tb db   -> Case v (termInv da) (termInv db)
+  RImpl v f d           -> Lam v f (termInv d)
   Foc _deltaLi _delta d -> termFoc d
 
 termFoc :: DerivationFoc -> Term
 termFoc = \case
-  AtomDown d -> termDown d
-  StartUp d -> termUp d
+  AtomDown d     -> termDown d
+  StartUp d      -> termUp d
   Cut bindings d ->
     let bindings' = (\(v, d') -> (v, termDown d')) <$> bindings
         body = termInv d
@@ -157,15 +159,15 @@ termFoc = \case
 
 termDown :: DerivationDown -> Term
 termDown = \case
-  LAnd d side -> Proj side (termDown d)
-  LImpl dab da -> App (termDown dab) (termUp da)
+  LAnd d side             -> Proj side (termDown d)
+  LImpl dab da            -> App (termDown dab) (termUp da)
   StartDown _gamma var _t -> Var var
 
 termUp :: DerivationUp -> Term
 termUp = \case
   ROr side ->
     let (side', d) = case side of
-          Left (d', _) -> (I1, d')
+          Left (d', _)  -> (I1, d')
           Right (_, d') -> (I2, d')
     in Inj side' (termUp d)
   EndUp d -> termInv d
@@ -254,7 +256,8 @@ withGoal :: Formula -> Map Formula (Map Context' a) -> Map Context' a
 withGoal goal tab = Map.findWithDefault mempty goal tab
 
 findTab :: Context' -> Formula -> Tabulation a -> Maybe a
-findTab context goal (Tabulation tab) = Map.lookup goal tab >>= Map.lookup context
+findTab context goal (Tabulation tab)
+  = Map.lookup goal tab >>= Map.lookup context
 
 addTab :: Context' -> Formula -> a -> Tabulation a -> Tabulation a
 addTab context goal v (Tabulation tab)
@@ -268,21 +271,29 @@ type M = GenT Var (Except Failure)
 runM :: M a -> Either Failure a
 runM m = runExcept $ runGenT m
 
-searchInv :: Memory -> Context' -> ContextList -> Formula -> M (Plur DerivationInv)
+searchInv
+  :: Memory -> Context' -> ContextList -> Formula -> M (Plur DerivationInv)
 searchInv memo gamma delta goal = searchInvSplit memo gamma [] delta goal
 
 fresh :: M Var
 fresh = gen
 
-searchInvSplit :: Memory -> Context' -> ContextList -> ContextList -> Formula -> M (Plur DerivationInv)
+searchInvSplit
+  :: Memory
+  -> Context'
+  -> ContextList
+  -> ContextList
+  -> Formula
+  -> M (Plur DerivationInv)
 searchInvSplit memo gamma deltaNa sigma goal = case sigma of
-  na@(_, Atom _)   : sigma' -> searchInvSplit memo gamma (na : deltaNa) sigma' goal
-  na@(_, And _ _)  : sigma' -> searchInvSplit memo gamma (na : deltaNa) sigma' goal
-  na@(_, Impl _ _) : sigma' -> searchInvSplit memo gamma (na : deltaNa) sigma' goal
   (v, Or a1 a2) : sigma' -> do
     d1 <- searchInvSplit memo gamma deltaNa ((v, a1) : sigma') goal
     d2 <- searchInvSplit memo gamma deltaNa ((v, a2) : sigma') goal
     pure $ LOr v a1 <$> d1 <*> pure a2 <*> d2
+
+  -- Atom, And, Impl
+  na : sigma' -> searchInvSplit memo gamma (na : deltaNa) sigma' goal
+
   [] -> case goal of
     And a b -> do
       da <- searchInvSplit memo gamma deltaNa [] a
@@ -297,7 +308,8 @@ searchInvSplit memo gamma deltaNa sigma goal = case sigma of
       d <- searchFoc memo gamma deltaRemainder pa
       pure $ Foc deltaNa deltaRemainder <$> d
 
-searchFoc :: Memory -> Context' -> Context' -> Formula -> M (Plur DerivationFoc)
+searchFoc
+  :: Memory -> Context' -> Context' -> Formula -> M (Plur DerivationFoc)
 searchFoc memo gamma delta goal =
   if null delta
   then searchFocRight memo gamma goal
@@ -318,11 +330,12 @@ searchFocRight' memo gamma goal = case goal of
     pure $ AtomDown <$> d
   And  _ _ -> throwError Failure
   Impl _ _ -> throwError Failure
-  Or _ _ -> do
+  Or   _ _ -> do
     d <- searchUp memo gamma goal
     pure $ StartUp <$> d
 
-searchFocLeft :: Memory -> Context' -> Context' -> Formula -> M (Plur DerivationFoc)
+searchFocLeft
+  :: Memory -> Context' -> Context' -> Formula -> M (Plur DerivationFoc)
 searchFocLeft memo gamma delta goal =
   let gammaDelta = addAfter gamma delta
   in if redundant Goal gammaDelta goal
@@ -371,7 +384,11 @@ searchDownAtom = searchDownAtom'
 -- same as mappend?
 -- lazySum :: Plur a -> Plur a -> Plur a
 
-fulfill :: (t -> Formula -> M (Plur DerivationUp)) -> t -> Obligation -> M (Plur DerivationDown)
+fulfill
+  :: (t -> Formula -> M (Plur DerivationUp))
+  -> t
+  -> Obligation
+  -> M (Plur DerivationDown)
 fulfill mySearchUp gamma obli = case obli of
   Done deriv -> pure $ pure deriv
   Request formula req -> do
@@ -387,7 +404,10 @@ searchDownAtom' memo gamma x =
         )
         gamma
 
-      proofs :: Plur DerivationDown -> (Obligation, Formula) -> M (Plur DerivationDown)
+      proofs
+        :: Plur DerivationDown
+        -> (Obligation, Formula)
+        -> M (Plur DerivationDown)
       proofs acc (obli, _head) = do
         deriv <- fulfill (searchUp memo) gamma obli
         pure $ acc <> deriv
@@ -490,7 +510,8 @@ main = do
         bar = Impl b (Impl a r)
     in Impl abr bar
 
-  putStrLn "Solving `(a -> b) -> (c -> d) -> a + c -> b + d` (map-sum) (1 expected):"
+  putStrLn
+    "Solving `(a -> b) -> (c -> d) -> a + c -> b + d` (map-sum) (1 expected):"
   printImpls $
     Impl
       (Impl a b)
