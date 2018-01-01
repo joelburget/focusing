@@ -19,6 +19,6 @@ executable focusing
   main-is:             Main.hs
   other-modules: Data.Plur
   -- other-extensions:
-  build-depends:       base >=4.10 && <4.11, text, containers
+  build-depends:       base >=4.10 && <4.11, text, containers, lens, monad-gen, mtl
   hs-source-dirs:      src
   default-language:    Haskell2010
