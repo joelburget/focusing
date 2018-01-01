@@ -28,15 +28,8 @@ type Atom = Text
 type Var  = Int
 type ContextList = [(Var, Type)]
 newtype Context a = Context { unContext :: Map Type a }
-  deriving (Show, Eq, Ord, Functor, Foldable)
+  deriving (Show, Eq, Ord, Functor, Foldable, Monoid)
 type Context' = Context (Plur Var)
-
-instance Monoid (Context a) where
-  mempty = Context mempty
-  mappend (Context c1) (Context c2) = Context (c1 <> c2)
-
--- contextMerge :: Context -> Context -> Context
--- contextMerge (Context a) (Context b) = Context (Map.merge a b)
 
 contextFind :: Type -> Context' -> Plur Var
 contextFind formula (Context context)
@@ -211,28 +204,18 @@ uses =
   in usesDown
 
 quotient :: ContextList -> Context' -> Context'
-quotient delta gamma =
-  let Context delta' = foldl (\m (v, a) -> addContext a v m) mempty delta
-      quoti k v = case findContext k gamma of
+quotient delta (Context gamma) =
+  let Context delta' = foldl (\ctx (var, ty) -> addContext ty var ctx) mempty delta
+      quoti k v = case Map.findWithDefault Zero k gamma of
         Two _ _ -> Zero
         Zero    -> v
         One _   -> case v of
           Two x _ -> One x
           _       -> v
+
+      addContext :: Type -> Var -> Context' -> Context'
+      addContext k v (Context t) = Context (Map.insertWith (<>) k (One v) t)
   in Context (imap quoti delta')
-
-addContext :: Type -> Var -> Context' -> Context'
-addContext k v (Context t) = Context (Map.insertWith (<>) k (One v) t)
-
-findContext :: Type -> Context' -> Plur Var
-findContext k (Context t) = Map.findWithDefault Zero k t
-
-addAfter :: Context' -> Context' -> Context'
-addAfter (Context gamma) (Context delta) = Context $ Map.merge
-  preserveMissing
-  preserveMissing
-  (zipWithMatched (\_ a b -> a <> b))
-  gamma delta
 
 data Judgement = Judgement Context' Type
   deriving (Eq, Ord)
@@ -240,25 +223,22 @@ data Judgement = Judgement Context' Type
 newtype Memory = Memory (Map Judgement (Plur ()))
   deriving Monoid
 
-find :: Judgement -> Memory -> Plur ()
-find j (Memory mem) = Map.findWithDefault Zero j mem
+-- Tabulation is used for memoization in the original implementation. Can we
+-- memoize purely?
 
-add :: Judgement -> Plur () -> Memory -> Memory
-add j v (Memory mem) = Memory (Map.insert j v mem)
+-- newtype Tabulation a = Tabulation (Map Type (Map Context' a))
+--   deriving Monoid
 
-newtype Tabulation a = Tabulation (Map Type (Map Context' a))
-  deriving Monoid
+-- withGoal :: Type -> Map Type (Map Context' a) -> Map Context' a
+-- withGoal goal tab = Map.findWithDefault mempty goal tab
 
-withGoal :: Type -> Map Type (Map Context' a) -> Map Context' a
-withGoal goal tab = Map.findWithDefault mempty goal tab
+-- findTab :: Context' -> Type -> Tabulation a -> Maybe a
+-- findTab context goal (Tabulation tab)
+--   = Map.lookup goal tab >>= Map.lookup context
 
-findTab :: Context' -> Type -> Tabulation a -> Maybe a
-findTab context goal (Tabulation tab)
-  = Map.lookup goal tab >>= Map.lookup context
-
-addTab :: Context' -> Type -> a -> Tabulation a -> Tabulation a
-addTab context goal v (Tabulation tab)
-  = Tabulation (Map.insert goal (Map.insert context v (withGoal goal tab)) tab)
+-- addTab :: Context' -> Type -> a -> Tabulation a -> Tabulation a
+-- addTab context goal v (Tabulation tab)
+--   = Tabulation (Map.insert goal (Map.insert context v (withGoal goal tab)) tab)
 
 data Failure = Failure
   deriving Show
@@ -266,7 +246,7 @@ data Failure = Failure
 type M = GenT Var (Except Failure)
 
 runM :: M a -> Either Failure a
-runM m = runExcept $ runGenT m
+runM = runExcept . runGenT
 
 searchInv
   :: Memory -> Context' -> ContextList -> Type -> M (Plur DerivationInv)
@@ -314,6 +294,13 @@ searchFoc memo gamma delta goal =
 searchFocRight :: Memory -> Context' -> Type -> M (Plur DerivationFoc)
 searchFocRight memo gamma goal =
   let request = Judgement gamma goal
+
+      find :: Judgement -> Memory -> Plur ()
+      find j (Memory mem) = Map.findWithDefault Zero j mem
+
+      add :: Judgement -> Plur () -> Memory -> Memory
+      add j v (Memory mem) = Memory (Map.insert j v mem)
+
   in case find request memo of
        Two () () -> pure Zero
        calls -> let memo' = add request (calls <> One ()) memo
@@ -332,17 +319,22 @@ searchFocRight' memo gamma goal = case goal of
 
 searchFocLeft
   :: Memory -> Context' -> Context' -> Type -> M (Plur DerivationFoc)
-searchFocLeft memo gamma delta goal =
-  let gammaDelta = addAfter gamma delta
+searchFocLeft memo (Context gamma) delta@(Context delta') goal =
+  let gammaDelta = Context $ Map.merge
+        preserveMissing
+        preserveMissing
+        (zipWithMatched (\_ a b -> a <> b))
+        gamma delta'
+
   in if redundant Goal gammaDelta goal
      then do
        dUp <- searchUp memo gammaDelta goal
        pure $ StartUp <$> dUp
      else do
        satur <- saturate memo gammaDelta delta
-       vars <- traverse (\_ -> fresh) satur
+       vars  <- traverse (\_ -> fresh) satur
        let (formulas, derivs) = unzip satur
-           cut = zip vars derivs
+           cut     = zip vars derivs
            context = zip vars formulas
        d <- searchInv memo gammaDelta context goal
        pure $ Cut cut <$> d
@@ -411,10 +403,7 @@ searchDownAtom' memo gamma x =
   in foldlM proofs Zero (concat (toList <$> oblis))
 
 contextAsSet :: Context' -> Set Var
-contextAsSet (Context context) =
-  foldMap
-    (\plurVar -> Set.fromList (toList plurVar))
-    context
+contextAsSet (Context context) = foldMap (Set.fromList . toList) context
 
 saturate :: Memory -> Context' -> Context' -> M [(Type, DerivationDown)]
 saturate memo gamma delta = do
