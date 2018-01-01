@@ -26,8 +26,8 @@ data F2 = I1 | I2
 
 type Atom = Text
 type Var  = Int
-type ContextList = [(Var, Formula)]
-newtype Context a = Context { unContext :: Map Formula a }
+type ContextList = [(Var, Type)]
+newtype Context a = Context { unContext :: Map Type a }
   deriving (Show, Eq, Ord, Functor, Foldable)
 type Context' = Context (Plur Var)
 
@@ -38,18 +38,18 @@ instance Monoid (Context a) where
 -- contextMerge :: Context -> Context -> Context
 -- contextMerge (Context a) (Context b) = Context (Map.merge a b)
 
-contextFind :: Formula -> Context' -> Plur Var
+contextFind :: Type -> Context' -> Plur Var
 contextFind formula (Context context)
   = Map.findWithDefault Zero formula context
 
-data Formula
+data Type
   = Atom Atom
-  | And  Formula Formula
-  | Or   Formula Formula
-  | Impl Formula Formula
+  | And  Type Type
+  | Or   Type Type
+  | Impl Type Type
   deriving (Eq, Ord)
 
-instance Show Formula where
+instance Show Type where
   showsPrec _d = \case
     Atom t     -> showString (Text.unpack t)
     And  f1 f2 -> showsPrec 1 f1 . showString " * "  . showsPrec 1 f2
@@ -61,8 +61,8 @@ instance Show Formula where
 -- invertible
 data DerivationInv
   = RAnd DerivationInv DerivationInv
-  | LOr Var Formula DerivationInv Formula DerivationInv
-  | RImpl Var Formula DerivationInv
+  | LOr Var Type DerivationInv Type DerivationInv
+  | RImpl Var Type DerivationInv
   | Foc ContextList Context' DerivationFoc
 
 -- focusing
@@ -75,18 +75,18 @@ data DerivationFoc
 data DerivationDown
   = LAnd DerivationDown F2
   | LImpl DerivationDown DerivationUp
-  | StartDown Context' Var Formula
+  | StartDown Context' Var Type
 
 -- non-invertible introduction
 data DerivationUp
-  = ROr (Either (DerivationUp, Formula) (Formula, DerivationUp))
+  = ROr (Either (DerivationUp, Type) (Type, DerivationUp))
   | EndUp DerivationInv
 
 data Obligation
   = Done DerivationDown
-  | Request Formula (DerivationUp -> Obligation)
+  | Request Type (DerivationUp -> Obligation)
 
-decomp :: Formula -> [(DerivationDown -> Obligation, Formula)]
+decomp :: Type -> [(DerivationDown -> Obligation, Type)]
 decomp pa = case pa of
   Atom _ -> [(Done, pa)]
   Or _ _ -> [(Done, pa)]
@@ -100,7 +100,7 @@ decomp pa = case pa of
 
 data Term
   = Var Var
-  | Lam Var Formula Term
+  | Lam Var Type Term
   | App Term Term
   | Pair Term Term
   | Proj F2 Term
@@ -175,7 +175,7 @@ termUp = \case
 data RedundancyMode = Hyp | Goal
 
 -- gamma: Context'
-redundant :: RedundancyMode -> Context' -> Formula -> Bool
+redundant :: RedundancyMode -> Context' -> Type -> Bool
 redundant mode gamma t = case t of
   Or a b -> case mode of
     Hyp  -> redundant mode gamma a && redundant mode gamma b
@@ -224,10 +224,10 @@ quotient delta gamma =
           _       -> v
   in Context (imap quoti delta')
 
-addContext :: Formula -> Var -> Context' -> Context'
+addContext :: Type -> Var -> Context' -> Context'
 addContext k v (Context t) = Context (Map.insertWith (<>) k (One v) t)
 
-findContext :: Formula -> Context' -> Plur Var
+findContext :: Type -> Context' -> Plur Var
 findContext k (Context t) = Map.findWithDefault Zero k t
 
 addAfter :: Context' -> Context' -> Context'
@@ -237,7 +237,7 @@ addAfter (Context gamma) (Context delta) = Context $ Map.merge
   (zipWithMatched (\_ a b -> a <> b))
   gamma delta
 
-data Judgement = Judgement Context' Formula
+data Judgement = Judgement Context' Type
   deriving (Eq, Ord)
 
 newtype Memory = Memory (Map Judgement (Plur ()))
@@ -249,17 +249,17 @@ find j (Memory mem) = Map.findWithDefault Zero j mem
 add :: Judgement -> Plur () -> Memory -> Memory
 add j v (Memory mem) = Memory (Map.insert j v mem)
 
-newtype Tabulation a = Tabulation (Map Formula (Map Context' a))
+newtype Tabulation a = Tabulation (Map Type (Map Context' a))
   deriving Monoid
 
-withGoal :: Formula -> Map Formula (Map Context' a) -> Map Context' a
+withGoal :: Type -> Map Type (Map Context' a) -> Map Context' a
 withGoal goal tab = Map.findWithDefault mempty goal tab
 
-findTab :: Context' -> Formula -> Tabulation a -> Maybe a
+findTab :: Context' -> Type -> Tabulation a -> Maybe a
 findTab context goal (Tabulation tab)
   = Map.lookup goal tab >>= Map.lookup context
 
-addTab :: Context' -> Formula -> a -> Tabulation a -> Tabulation a
+addTab :: Context' -> Type -> a -> Tabulation a -> Tabulation a
 addTab context goal v (Tabulation tab)
   = Tabulation (Map.insert goal (Map.insert context v (withGoal goal tab)) tab)
 
@@ -272,7 +272,7 @@ runM :: M a -> Either Failure a
 runM m = runExcept $ runGenT m
 
 searchInv
-  :: Memory -> Context' -> ContextList -> Formula -> M (Plur DerivationInv)
+  :: Memory -> Context' -> ContextList -> Type -> M (Plur DerivationInv)
 searchInv memo gamma delta goal = searchInvSplit memo gamma [] delta goal
 
 fresh :: M Var
@@ -283,7 +283,7 @@ searchInvSplit
   -> Context'
   -> ContextList
   -> ContextList
-  -> Formula
+  -> Type
   -> M (Plur DerivationInv)
 searchInvSplit memo gamma deltaNa sigma goal = case sigma of
   (v, Or a1 a2) : sigma' -> do
@@ -308,14 +308,13 @@ searchInvSplit memo gamma deltaNa sigma goal = case sigma of
       d <- searchFoc memo gamma deltaRemainder pa
       pure $ Foc deltaNa deltaRemainder <$> d
 
-searchFoc
-  :: Memory -> Context' -> Context' -> Formula -> M (Plur DerivationFoc)
+searchFoc :: Memory -> Context' -> Context' -> Type -> M (Plur DerivationFoc)
 searchFoc memo gamma delta goal =
   if null delta
   then searchFocRight memo gamma goal
   else searchFocLeft memo gamma delta goal
 
-searchFocRight :: Memory -> Context' -> Formula -> M (Plur DerivationFoc)
+searchFocRight :: Memory -> Context' -> Type -> M (Plur DerivationFoc)
 searchFocRight memo gamma goal =
   let request = Judgement gamma goal
   in case find request memo of
@@ -323,7 +322,7 @@ searchFocRight memo gamma goal =
        calls -> let memo' = add request (calls <> One ()) memo
                 in searchFocRight' memo' gamma goal
 
-searchFocRight' :: Memory -> Context' -> Formula -> M (Plur DerivationFoc)
+searchFocRight' :: Memory -> Context' -> Type -> M (Plur DerivationFoc)
 searchFocRight' memo gamma goal = case goal of
   Atom atom -> do
     d <- searchDownAtom memo gamma atom
@@ -335,7 +334,7 @@ searchFocRight' memo gamma goal = case goal of
     pure $ StartUp <$> d
 
 searchFocLeft
-  :: Memory -> Context' -> Context' -> Formula -> M (Plur DerivationFoc)
+  :: Memory -> Context' -> Context' -> Type -> M (Plur DerivationFoc)
 searchFocLeft memo gamma delta goal =
   let gammaDelta = addAfter gamma delta
   in if redundant Goal gammaDelta goal
@@ -351,10 +350,10 @@ searchFocLeft memo gamma delta goal =
        d <- searchInv memo gammaDelta context goal
        pure $ Cut cut <$> d
 
-searchUp :: Memory -> Context' -> Formula -> M (Plur DerivationUp)
+searchUp :: Memory -> Context' -> Type -> M (Plur DerivationUp)
 searchUp = searchUp' -- case monotony gamma goal
 
-searchUp' :: Memory -> Context' -> Formula -> M (Plur DerivationUp)
+searchUp' :: Memory -> Context' -> Type -> M (Plur DerivationUp)
 searchUp' memo gamma goal = case goal of
   Or a1 a2 -> do
     d1 <- searchUp memo gamma a1
@@ -366,7 +365,7 @@ searchUp' memo gamma goal = case goal of
     d <- searchInv memo gamma [] goal
     pure $ EndUp <$> d
 
-selectOblis :: (Formula -> Bool) -> Context' -> [Plur (Obligation, Formula)]
+selectOblis :: (Type -> Bool) -> Context' -> [Plur (Obligation, Type)]
 selectOblis p gamma@(Context gamma') =
   let addOblis na oblis multi =
         let candidates = map
@@ -385,7 +384,7 @@ searchDownAtom = searchDownAtom'
 -- lazySum :: Plur a -> Plur a -> Plur a
 
 fulfill
-  :: (t -> Formula -> M (Plur DerivationUp))
+  :: (t -> Type -> M (Plur DerivationUp))
   -> t
   -> Obligation
   -> M (Plur DerivationDown)
@@ -397,7 +396,7 @@ fulfill mySearchUp gamma obli = case obli of
 
 searchDownAtom' :: Memory -> Context' -> Atom -> M (Plur DerivationDown)
 searchDownAtom' memo gamma x =
-  let oblis :: [Plur (Obligation, Formula)]
+  let oblis :: [Plur (Obligation, Type)]
       oblis = selectOblis (\case
         Atom y -> x == y
         _      -> False
@@ -406,7 +405,7 @@ searchDownAtom' memo gamma x =
 
       proofs
         :: Plur DerivationDown
-        -> (Obligation, Formula)
+        -> (Obligation, Type)
         -> M (Plur DerivationDown)
       proofs acc (obli, _head) = do
         deriv <- fulfill (searchUp memo) gamma obli
@@ -420,7 +419,7 @@ contextAsSet (Context context) =
     (\plurVar -> Set.fromList (toList plurVar))
     context
 
-saturate :: Memory -> Context' -> Context' -> M [(Formula, DerivationDown)]
+saturate :: Memory -> Context' -> Context' -> M [(Type, DerivationDown)]
 saturate memo gamma delta = do
   let strictlyPositive = \case
         Or _ _ -> True
@@ -429,7 +428,7 @@ saturate memo gamma delta = do
       oblis      = selectOblis goodCut gamma
       deltaAsSet = contextAsSet delta
 
-      traverser :: Plur (Obligation, Formula) -> M [(Formula, DerivationDown)]
+      traverser :: Plur (Obligation, Type) -> M [(Type, DerivationDown)]
       traverser multiObli = case multiObli of
         Zero -> pure []
         One (obli, hd) -> do
@@ -444,7 +443,7 @@ saturate memo gamma delta = do
 
   pure $ filter (\(_head, deriv) -> uses deltaAsSet deriv) $ concat derivs
 
-search :: Formula -> M (Plur DerivationInv)
+search :: Type -> M (Plur DerivationInv)
 search = searchInv mempty mempty []
 
 terms :: M (Plur DerivationInv) -> Either Failure [Term]
@@ -452,7 +451,7 @@ terms t = case runM t of
   (Left f) -> Left f
   Right t' -> Right (fmap termInv (toList t'))
 
-printImpls :: Formula -> IO ()
+printImpls :: Type -> IO ()
 printImpls f = do
   let tms = terms (search f)
   case tms of
@@ -462,13 +461,13 @@ printImpls f = do
 main :: IO ()
 main = do
 
-  let a, b, c, d :: Formula
+  let a, b, c, d :: Type
       a = Atom "A"
       b = Atom "B"
       c = Atom "C"
       d = Atom "D"
 
-      -- a'F, b'F, c'F, d'F :: Formula
+      -- a'F, b'F, c'F, d'F :: Type
       -- a'F = Atom "A'"
       -- b'F = Atom "B'"
       -- c'F = Atom "C'"
