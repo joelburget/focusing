@@ -11,7 +11,10 @@ b = Atom "B"
 c = Atom "C"
 d = Atom "D"
 
+r :: Type
 r = Atom "r"
+
+cont :: Type -> Type -> Type
 cont r' a' = Impl (Impl a' r') r'
 
 -- a'F, b'F, c'F, d'F :: Type

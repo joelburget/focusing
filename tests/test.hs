@@ -1,3 +1,5 @@
+module Main where
+
 import Control.Monad (forM_)
 import Data.Plur
 import EasyTest
@@ -8,10 +10,9 @@ main :: IO ()
 main = run suite
 
 numTerms :: Type -> Maybe Int
-numTerms f = do
-  case runM (search f) of
-    Left err   -> Nothing
-    Right plur -> Just (count plur)
+numTerms f = case runM (search f) of
+  Left err   -> Nothing
+  Right plur -> Just (count plur)
 
 suite :: Test ()
 suite = forM_ examples $ \(Example desc count formula) ->
