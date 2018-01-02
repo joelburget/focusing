@@ -2,7 +2,7 @@
 {-# language LambdaCase #-}
 {-# language OverloadedStrings #-}
 {-# language TupleSections #-}
-module Main where
+module Focusing where
 
 import Control.Lens hiding (Context, Context', uses)
 import Control.Monad.Error.Class
@@ -223,8 +223,8 @@ data Judgement = Judgement Context' Type
 newtype Memory = Memory (Map Judgement (Plur ()))
   deriving Monoid
 
--- Tabulation is used for memoization in the original implementation. Can we
--- memoize purely?
+-- Tabulation is used for memoization in the original implementation.
+-- Unfortunately I don't know how to do this particular memoization purely.
 
 -- newtype Tabulation a = Tabulation (Map Type (Map Context' a))
 --   deriving Monoid
@@ -443,68 +443,3 @@ printImpls f = do
   case tms of
     Left err -> print err
     Right tms' -> mapM_ putStrLn (("  * " <>) . show <$> tms')
-
-main :: IO ()
-main = do
-
-  let a, b, c, d :: Type
-      a = Atom "A"
-      b = Atom "B"
-      c = Atom "C"
-      d = Atom "D"
-
-      -- a'F, b'F, c'F, d'F :: Type
-      -- a'F = Atom "A'"
-      -- b'F = Atom "B'"
-      -- c'F = Atom "C'"
-      -- d'F = Atom "D'"
-
-  putStrLn "Solving `a -> b` (0 expected):"
-  printImpls $ Impl a b
-
-  putStrLn "Solving `(c -> d) -> (c -> d)` (1 expected):"
-  printImpls $ let cd = Impl c d in Impl cd cd
-
-  putStrLn "Solving `c -> c -> c` (2 expected):"
-  printImpls $ Impl c (Impl c c)
-
-  putStrLn "Solving `a + b -> a + b` (1 expected):"
-  printImpls $ let ab = Or a b in Impl ab ab
-
-  putStrLn "Solving `a -> (a -> b + c) -> b + c` (1 expected):"
-  printImpls $ Impl a (Impl (Impl a (Or b c)) (Or b c))
-
-  putStrLn "Solving `a -> (a -> b + b) -> b + c` (1 expected):"
-  printImpls $ Impl a (Impl (Impl a (Or b b)) (Or b c))
-
-  putStrLn "Solving `a -> (a -> b + b) -> c + c` (0 expected):"
-  printImpls $ Impl a (Impl (Impl a (Or b b)) (Or c c))
-
-  putStrLn "Solving `a -> (a -> b + b) -> b + b` (2 expected):"
-  printImpls $ Impl a (Impl (Impl a (Or b b)) (Or b b))
-
-  let r = Atom "r"
-  let cont r' a' = Impl (Impl a' r') r'
-
-  putStrLn "Solving `cont r a -> cont r a` (2 expected):"
-  printImpls $ Impl (cont r a) (cont r a)
-
-  putStrLn "Solving `(a -> b -> r) -> (b -> a -> r)` (swap) (1 expected):"
-  printImpls $
-    let abr = Impl a (Impl b r)
-        bar = Impl b (Impl a r)
-    in Impl abr bar
-
-  putStrLn
-    "Solving `(a -> b) -> (c -> d) -> a + c -> b + d` (map-sum) (1 expected):"
-  printImpls $
-    Impl
-      (Impl a b)
-      (Impl
-        (Impl c d)
-        (Impl
-          (Or a c)
-          (Or b d)))
-
-  putStrLn "Solving `a -> (a -> a) -> a` (church numerals) (2 expected)"
-  printImpls $ Impl a (Impl (Impl a a) a)
